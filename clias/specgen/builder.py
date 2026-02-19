@@ -144,6 +144,12 @@ class SpecBuilder:
         except json.JSONDecodeError:
             return ToolSpec(name=fallback_name, description="Failed to parse spec from LLM")
 
+        # Coerce typical_args values to strings before Pydantic validation
+        for wf in data.get("workflows", []):
+            for step in wf.get("steps", []):
+                if "typical_args" in step:
+                    step["typical_args"] = self._coerce_str_dict(step["typical_args"])
+
         try:
             return ToolSpec.model_validate(data)
         except Exception:
@@ -180,7 +186,7 @@ class SpecBuilder:
                 WorkflowStep(
                     description=s.get("description", ""),
                     command_ref=s.get("command_ref", ""),
-                    typical_args=s.get("typical_args", {}),
+                    typical_args=self._coerce_str_dict(s.get("typical_args", {})),
                 )
                 for s in wf.get("steps", [])
             ]
@@ -202,6 +208,19 @@ class SpecBuilder:
             workflows=workflows,
             examples=examples,
         )
+
+    @staticmethod
+    def _coerce_str_dict(d: dict | None) -> dict[str, str]:
+        """Coerce dict values to strings — LLMs sometimes return lists instead."""
+        if not d or not isinstance(d, dict):
+            return {}
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, list):
+                result[k] = " ".join(str(i) for i in v)
+            else:
+                result[k] = str(v)
+        return result
 
     @staticmethod
     def _parse_json_list(raw: str) -> list[dict]:
