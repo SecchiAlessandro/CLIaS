@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clias"
+version = "0.1.0"
+description = "Turn any observed software into an AI-powered CLI assistant"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    "litellm>=1.0",
+    "mss>=9.0",
+    "Pillow>=10.0",
+    "pyyaml>=6.0",
+    "tomli>=2.0; python_version < '3.12'",
+    "tomli-w>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+clias = "clias.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clias*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

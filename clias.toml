@@ -1,0 +1,13 @@
+# CLIaS configuration
+
+[llm]
+model = "gpt-4o"
+vision_model = "gpt-4o"
+temperature = 0.2
+max_tokens = 4096
+
+[observer]
+screenshot_interval = 2.0
+change_threshold = 0.05
+
+output_dir = "./clias_output"
