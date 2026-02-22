@@ -67,8 +67,11 @@ def observe(ctx: click.Context, output: str, screen: bool, command: tuple[str, .
 @click.option("--output", "-o", type=click.Path(), default=None, help="Output spec file path.")
 @click.option("--format", "fmt", type=click.Choice(["json", "yaml"]), default="json")
 @click.option("--vision/--no-vision", default=False, help="Include screenshot analysis.")
+@click.option("--no-prompt", is_flag=True, default=False, help="Disable interactive credential prompting.")
+@click.option("--no-generate", is_flag=True, default=False, help="Skip automatic CLI and skill generation.")
+@click.option("--skills-dir", type=click.Path(), default="./skills", help="Directory for generated skills.")
 @click.pass_context
-def analyze(ctx: click.Context, session_dir: str, output: str | None, fmt: str, vision: bool) -> None:
+def analyze(ctx: click.Context, session_dir: str, output: str | None, fmt: str, vision: bool, no_prompt: bool, no_generate: bool, skills_dir: str) -> None:
     """Analyze a recorded session and produce a ToolSpec."""
     from clias.observer.session import SessionManifest
     from clias.observer.shell import ShellObserver
@@ -100,7 +103,14 @@ def analyze(ctx: click.Context, session_dir: str, output: str | None, fmt: str, 
     console.print(f"  → {len(patterns)} patterns identified.")
 
     # Optional vision analysis
-    spec_builder = SpecBuilder(llm)
+    credential_callback = None
+    if not no_prompt:
+        from clias.prompting import ask_user_credentials
+
+        def credential_callback(missing):
+            return ask_user_credentials(missing, console)
+
+    spec_builder = SpecBuilder(llm, credential_callback=credential_callback)
     if vision:
         screenshots_dir = session_path / "screenshots"
         if screenshots_dir.exists():
@@ -141,6 +151,21 @@ def analyze(ctx: click.Context, session_dir: str, output: str | None, fmt: str, 
     if spec.interaction_methods:
         console.print(f"  Interaction:  {', '.join(m.method for m in spec.interaction_methods)}")
 
+    # Auto-generate CLI script and skill
+    if not no_generate:
+        from clias.cligen.scaffold import CLIScaffold
+        from clias.skillgen.generator import SkillGenerator
+
+        cli_output = Path(f"./{spec.name}_cli.py")
+        scaffold = CLIScaffold(spec)
+        cli_output = scaffold.generate(cli_output)
+        console.print(f"\n[green]CLI generated:[/green] {cli_output}")
+        console.print(f"  Run with: python {cli_output} --help")
+
+        gen = SkillGenerator(spec, cli_output)
+        skill_path = gen.generate(Path(skills_dir))
+        console.print(f"[green]Skill generated:[/green] {skill_path}")
+
 
 # ---------------------------------------------------------------------------
 # generate — produce a CLI from a ToolSpec
@@ -148,8 +173,10 @@ def analyze(ctx: click.Context, session_dir: str, output: str | None, fmt: str, 
 @main.command()
 @click.argument("spec_file", type=click.Path(exists=True))
 @click.option("--output", "-o", type=click.Path(), default=None, help="Output CLI script path.")
+@click.option("--skill/--no-skill", default=True, help="Also generate a Claude Code skill.")
+@click.option("--skills-dir", type=click.Path(), default="./skills", help="Directory for generated skills.")
 @click.pass_context
-def generate(ctx: click.Context, spec_file: str, output: str | None) -> None:
+def generate(ctx: click.Context, spec_file: str, output: str | None, skill: bool, skills_dir: str) -> None:
     """Generate a standalone CLI from a ToolSpec file."""
     from clias.specgen.schema import ToolSpec
     from clias.cligen.scaffold import CLIScaffold
@@ -164,6 +191,43 @@ def generate(ctx: click.Context, spec_file: str, output: str | None) -> None:
     console.print(f"\n[green]CLI generated:[/green] {out_path}")
     console.print(f"  Run with: python {out_path} --help")
     console.print(f"  Or:       python {out_path} ask 'your request here'")
+
+    if skill:
+        from clias.skillgen.generator import SkillGenerator
+
+        gen = SkillGenerator(spec, out_path)
+        skill_path = gen.generate(Path(skills_dir))
+        console.print(f"\n[green]Skill generated:[/green] {skill_path}")
+
+
+# ---------------------------------------------------------------------------
+# skill — generate a Claude Code skill from an existing spec
+# ---------------------------------------------------------------------------
+@main.command()
+@click.argument("spec_file", type=click.Path(exists=True))
+@click.option("--cli-script", type=click.Path(exists=True), default=None, help="Existing CLI script (generates one if omitted).")
+@click.option("--output", "-o", type=click.Path(), default="./skills", help="Skills output directory.")
+@click.pass_context
+def skill(ctx: click.Context, spec_file: str, cli_script: str | None, output: str) -> None:
+    """Generate a Claude Code skill from a ToolSpec file."""
+    from clias.specgen.schema import ToolSpec
+    from clias.skillgen.generator import SkillGenerator
+
+    spec = ToolSpec.load(Path(spec_file))
+
+    if cli_script is None:
+        from clias.cligen.scaffold import CLIScaffold
+
+        cli_output = Path(f"./{spec.name}_cli.py")
+        scaffold = CLIScaffold(spec)
+        cli_output = scaffold.generate(cli_output)
+        console.print(f"[green]CLI generated:[/green] {cli_output}")
+    else:
+        cli_output = Path(cli_script)
+
+    gen = SkillGenerator(spec, cli_output)
+    skill_path = gen.generate(Path(output))
+    console.print(f"\n[green]Skill generated:[/green] {skill_path}")
 
 
 # ---------------------------------------------------------------------------

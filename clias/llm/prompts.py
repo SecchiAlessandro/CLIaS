@@ -22,6 +22,32 @@ Respond in JSON:
 }}
 """
 
+SHELL_CLASSIFY_API = """\
+You are a software analyst. Given the following API call (curl/httpie) and its
+pre-parsed data, classify it into a high-level operation.
+
+Command: {command}
+Working directory: {cwd}
+Exit code: {exit_code}
+HTTP method: {http_method}
+URL: {url}
+Request body: {request_body}
+Stdout (truncated):
+{stdout}
+Stderr (truncated):
+{stderr}
+
+Respond in JSON:
+{{
+  "tool": "<name of the API service, e.g. github, stripe, slack>",
+  "operation": "<short verb-noun label, e.g. list-issues, create-charge>",
+  "description": "<one sentence explaining what this API call does>",
+  "flags_used": ["<list of flags/options used in the command>"],
+  "is_destructive": <true|false>,
+  "api_resource": "<the REST resource being acted on, e.g. issues, charges, messages>"
+}}
+"""
+
 VISION_DESCRIBE = """\
 Describe the application UI shown in these screenshots. For each screenshot:
 1. Identify the application name and window title.

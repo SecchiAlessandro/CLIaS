@@ -53,6 +53,16 @@ class Example(BaseModel):
     command: str
 
 
+class EndpointSpec(BaseModel):
+    http_method: str              # GET, POST, PUT, DELETE, PATCH
+    path: str                     # /repos/{owner}/{repo}/issues
+    description: str = ""
+    query_params: list[str] = Field(default_factory=list)
+    request_body_sample: dict | None = None
+    response_schema_sample: dict | None = None
+    source_command: str = ""
+
+
 class InteractionMethod(BaseModel):
     """Describes how a tool can be interacted with beyond plain CLI."""
 
@@ -62,6 +72,7 @@ class InteractionMethod(BaseModel):
     auth_type: str | None = None  # "api_key", "oauth2", "token", "basic", "none"
     auth_env_var: str | None = None  # e.g. "DOCKER_HOST", "GITHUB_TOKEN"
     headers: dict[str, str] = Field(default_factory=dict)
+    endpoints: list[EndpointSpec] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -99,8 +110,10 @@ class ToolSpec(BaseModel):
     def commands_summary(self) -> str:
         lines = []
         for cmd in self.commands:
-            flags = " ".join(f.flag for f in cmd.flags[:5])
-            lines.append(f"  {cmd.canonical} {flags}  — {cmd.description}")
+            args = " ".join(f"<{a.name}>" for a in cmd.arguments[:4])
+            flags = " ".join(f.flag for f in cmd.flags[:8])
+            detail = " ".join(filter(None, [args, flags]))
+            lines.append(f"  {cmd.canonical} {detail}  — {cmd.description}")
         return "\n".join(lines)
 
     def merge(self, other: ToolSpec) -> ToolSpec:
@@ -120,9 +133,9 @@ class ToolSpec(BaseModel):
             if wf.name not in existing_workflows:
                 self.workflows.append(wf)
 
-        existing_methods = {m.method for m in self.interaction_methods}
+        existing_methods = {(m.method, m.base_url) for m in self.interaction_methods}
         for im in other.interaction_methods:
-            if im.method not in existing_methods:
+            if (im.method, im.base_url) not in existing_methods:
                 self.interaction_methods.append(im)
 
         return self

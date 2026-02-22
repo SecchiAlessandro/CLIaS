@@ -47,6 +47,15 @@ class NLTranslator:
                 parts.append(f"- {im.method}: requires ${im.auth_env_var} ({im.auth_type})")
             if im.base_url:
                 parts.append(f"- {im.method} endpoint: {im.base_url}")
+            if im.headers:
+                for hname, hval in im.headers.items():
+                    parts.append(f"- Header: {hname}: {hval}")
             if im.notes:
                 parts.append(f"  Note: {im.notes}")
+            # Include up to 8 endpoint summaries
+            for ep in im.endpoints[:8]:
+                body_fields = ""
+                if ep.request_body_sample and isinstance(ep.request_body_sample, dict):
+                    body_fields = f" [body fields: {', '.join(ep.request_body_sample.keys())}]"
+                parts.append(f"  {ep.http_method} {ep.path} — {ep.description}{body_fields}")
         return "\n".join(parts)

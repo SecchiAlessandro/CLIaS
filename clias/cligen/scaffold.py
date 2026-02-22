@@ -8,6 +8,23 @@ from pathlib import Path
 from clias.specgen.schema import ToolSpec, CommandSpec, Capability
 
 
+def _parse_flag(raw: str) -> tuple[list[str], str]:
+    """Parse a flag string like '-s, --short' into Click args and a Python param name.
+
+    Returns (click_args, python_param).
+    Examples:
+        '-s, --short'   -> (['-s', '--short'], 'short')
+        '--oneline'     -> (['--oneline'], 'oneline')
+        '-D'            -> (['-D'], 'd')
+        '-n, --max-count' -> (['-n', '--max-count'], 'max_count')
+    """
+    parts = [p.strip() for p in raw.split(",")]
+    # Prefer the longest (long-form) flag for the param name
+    longest = max(parts, key=len)
+    param = longest.lstrip("-").replace("-", "_").lower()
+    return parts, param
+
+
 class CLIScaffold:
     """Generates a standalone Python CLI script from a ToolSpec."""
 
@@ -84,6 +101,14 @@ def cli():
                     )
                 if im.base_url:
                     auth_notes.append(f"    - {im.method} endpoint: {im.base_url}")
+                if im.headers:
+                    for hname, hval in im.headers.items():
+                        auth_notes.append(f"    - Header: {hname}: {hval}")
+                for ep in im.endpoints[:6]:
+                    body_hint = ""
+                    if ep.request_body_sample and isinstance(ep.request_body_sample, dict):
+                        body_hint = f" [body: {', '.join(ep.request_body_sample.keys())}]"
+                    auth_notes.append(f"    - {ep.http_method} {ep.path} — {ep.description}{body_hint}")
             if auth_notes:
                 auth_section = (
                     '\\n\\nAuthentication / API notes:\\n' + '\\n'.join(auth_notes)
@@ -103,7 +128,7 @@ def ask(request, execute, dry_run, model):
 
     user_input = " ".join(request)
     cmds_summary = "\\n".join(
-        f"  {{c['canonical']}} — {{c.get('description', '')}}"
+        f"  {{c['canonical']}} {{' '.join(f.get('flag','') for f in c.get('flags',[])[:8])}} — {{c.get('description', '')}}"
         for c in TOOL_SPEC.get("commands", [])
     )
 
@@ -183,11 +208,17 @@ def ask(request, execute, dry_run, model):
         return "\n".join(lines)
 
     def _make_command(self, group_name: str, cmd: CommandSpec) -> str:
-        parts = cmd.canonical.split()
+        # Strip angle-bracket placeholders and parenthesized args from canonical
+        import re
+        clean_canonical = re.sub(r"<[^>]+>", "", cmd.canonical).strip()
+        clean_canonical = re.sub(r"\([^)]*\)", "", clean_canonical).strip()
+        parts = clean_canonical.split()
         cmd_name = parts[-1] if len(parts) > 1 else parts[0]
-        safe_name = cmd_name.replace("-", "_").lower()
+        safe_name = re.sub(r"[^a-z0-9_]", "_", cmd_name.replace("-", "_").lower()).strip("_")
+        # Use the cleaned last word as the Click command name
+        display_name = cmd_name
 
-        lines = [f'@{group_name}.command(name="{cmd_name}")']
+        lines = [f'@{group_name}.command(name="{display_name}")']
 
         for arg in cmd.arguments:
             arg_name = arg.name.replace("-", "_").lower()
@@ -196,23 +227,44 @@ def ask(request, execute, dry_run, model):
             else:
                 lines.append(f'@click.argument("{arg_name}", default=None, required=False)')
 
-        for flag in cmd.flags:
-            flag_clean = flag.flag.lstrip("-")
-            param = flag_clean.replace("-", "_").lower()
+        # Filter out flags that contain spaces (e.g. "-X POST") — these are
+        # curl/httpie syntax artifacts, not real CLI flags.
+        valid_flags = [
+            (i, f) for i, f in enumerate(cmd.flags)
+            if " " not in f.flag.strip()
+        ]
+
+        for _, flag in valid_flags:
+            click_args, param = _parse_flag(flag.flag)
+            option_args = ", ".join(f'"{a}"' for a in click_args)
             if flag.takes_value:
                 lines.append(
-                    f'@click.option("{flag.flag}", default=None, help="{flag.description}")'
+                    f'@click.option({option_args}, default=None, help="{flag.description}")'
                 )
             else:
                 lines.append(
-                    f'@click.option("{flag.flag}", is_flag=True, help="{flag.description}")'
+                    f'@click.option({option_args}, is_flag=True, help="{flag.description}")'
                 )
 
+        # Build unique param names (deduplicate collisions between args and flags)
+        seen_params: set[str] = set()
         param_list = []
         for arg in cmd.arguments:
-            param_list.append(arg.name.replace("-", "_").lower())
-        for flag in cmd.flags:
-            param_list.append(flag.flag.lstrip("-").replace("-", "_").lower())
+            p = arg.name.replace("-", "_").lower()
+            seen_params.add(p)
+            param_list.append(p)
+
+        flag_param_map: dict[int, str] = {}  # orig flag index -> unique param name
+        for orig_i, flag in valid_flags:
+            _, param = _parse_flag(flag.flag)
+            orig = param
+            suffix = 2
+            while param in seen_params:
+                param = f"{orig}_{suffix}"
+                suffix += 1
+            seen_params.add(param)
+            flag_param_map[orig_i] = param
+            param_list.append(param)
 
         sig = ", ".join(param_list)
         lines.append(f"def {safe_name}({sig}):")
@@ -224,14 +276,16 @@ def ask(request, execute, dry_run, model):
             lines.append(f"    if {arg_var} is not None:")
             lines.append(f"        parts.append(str({arg_var}))")
 
-        for flag in cmd.flags:
-            flag_var = flag.flag.lstrip("-").replace("-", "_").lower()
+        for orig_i, flag in valid_flags:
+            click_args, _ = _parse_flag(flag.flag)
+            flag_var = flag_param_map[orig_i]
+            longest_flag = max(click_args, key=len)
             if flag.takes_value:
                 lines.append(f"    if {flag_var} is not None:")
-                lines.append(f'        parts.append(f"{flag.flag} {{{flag_var}}}")')
+                lines.append(f'        parts.append(f"{longest_flag} {{{flag_var}}}")')
             else:
                 lines.append(f"    if {flag_var}:")
-                lines.append(f'        parts.append("{flag.flag}")')
+                lines.append(f'        parts.append("{longest_flag}")')
 
         lines.append('    full_cmd = " ".join(parts)')
         lines.append('    console.print(f"[dim]$ {full_cmd}[/dim]")')

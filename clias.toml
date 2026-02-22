@@ -3,8 +3,8 @@
 output_dir = "./clias_output"
 
 [llm]
-model = "gpt-4o"
-vision_model = "gpt-4o"
+model = "anthropic/claude-haiku-4-5-20251001"
+vision_model = "anthropic/claude-haiku-4-5-20251001"
 temperature = 0.2
 max_tokens = 4096
 
