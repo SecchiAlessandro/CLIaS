@@ -1,4 +1,4 @@
-"""CLIaS main CLI — observe, analyze, generate, ask."""
+"""CLIaS main CLI — observe, analyze, generate, skill, ask, merge."""
 
 from __future__ import annotations
 

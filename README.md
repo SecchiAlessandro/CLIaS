@@ -5,15 +5,14 @@ Turn any observed software into an AI-powered command-line assistant.
 CLIaS watches how software is used (terminal commands and optionally GUI interactions), distills that knowledge into a structured specification, then generates a custom CLI where users describe what they want in **natural language** and an LLM translates it into the correct shell commands.
 
 ```
-┌──────────┐   ┌───────────┐   ┌──────────┐   ┌────────┐
-│ Observer  │──▶│ Analyzer  │──▶│ SpecGen  │──▶│ CLIGen │
-│  Layer    │   │  Engine   │   │          │   │        │
-└──────────┘   └───────────┘   └──────────┘   └────────┘
+┌──────────┐   ┌───────────┐   ┌──────────┐   ┌──────────────────┐
+│ Observer  │──▶│ Analyzer  │──▶│ SpecGen  │──▶│ CLIGen + SkillGen│
+│  Layer    │   │  Engine   │   │          │   │                  │
+└──────────┘   └───────────┘   └──────────┘   └──────────────────┘
      │                                             │
      ▼                                             ▼
-Screen + Shell                               Generated
-recordings                                   CLI + NL
-                                             interface
+Screen + Shell                               Generated CLI +
+recordings                                   Claude Code Skill
 ```
 
 ## Quick Start
@@ -105,8 +104,11 @@ clias analyze ./session_dir --vision
 | `-o, --output` | Output spec path (default: `<session_dir>/tool_spec.json`) |
 | `--format` | `json` or `yaml` (default: `json`) |
 | `--vision / --no-vision` | Include screenshot analysis (default: off) |
+| `--no-prompt` | Disable interactive credential prompting |
+| `--no-generate` | Skip automatic CLI and skill generation |
+| `--skills-dir` | Directory for generated skills (default: `./skills`) |
 
-**Pipeline:** Load events → Classify commands → (optional) Analyze screenshots → Cross-reference → Build ToolSpec.
+**Pipeline:** Load events → Classify commands (with deterministic fast-path for curl/httpie) → (optional) Analyze screenshots → Cross-reference → Build ToolSpec → Auto-generate CLI + Claude Code skill.
 
 ### `clias generate`
 
@@ -123,11 +125,30 @@ python git_cli.py ask "create a new feature branch"
 | Option | Description |
 |--------|-------------|
 | `-o, --output` | Output script path (default: `./<tool_name>_cli.py`) |
+| `--skill / --no-skill` | Also generate a Claude Code skill (default: on) |
+| `--skills-dir` | Directory for generated skills (default: `./skills`) |
 
 The generated CLI includes:
 - Click command groups organized by capability
 - An `ask` subcommand for natural language interaction
 - Embedded ToolSpec as a JSON constant (fully portable)
+
+### `clias skill`
+
+Generate a Claude Code skill directory from an existing ToolSpec. The skill includes a `SKILL.md` with frontmatter, reference docs, and scripts.
+
+```bash
+# Generate skill from spec (auto-generates CLI script if not provided)
+clias skill git_spec.json -o ./skills
+
+# Use an existing CLI script
+clias skill git_spec.json --cli-script git_cli.py -o ./skills
+```
+
+| Option | Description |
+|--------|-------------|
+| `--cli-script` | Path to an existing CLI script (generates one if omitted) |
+| `-o, --output` | Skills output directory (default: `./skills`) |
 
 ### `clias ask`
 
@@ -234,8 +255,9 @@ The ToolSpec is the portable intermediate representation at the heart of CLIaS. 
 ```
 CLIaS/
 ├── clias/
-│   ├── cli.py                 # Main Click CLI (observe, analyze, generate, ask, merge)
+│   ├── cli.py                 # Main Click CLI (observe, analyze, generate, skill, ask, merge)
 │   ├── config.py              # TOML config loading
+│   ├── prompting.py           # Interactive credential prompting
 │   ├── observer/
 │   │   ├── session.py         # Session manager & manifest
 │   │   ├── shell.py           # Shell event recording (PTY + command mode)
@@ -246,19 +268,28 @@ CLIaS/
 │   │   └── merger.py          # UI ↔ Shell cross-referencing
 │   ├── specgen/
 │   │   ├── schema.py          # Pydantic models (ToolSpec, CommandSpec, etc.)
-│   │   └── builder.py         # Spec generation from patterns
+│   │   ├── builder.py         # Spec generation from patterns
+│   │   ├── api_parser.py      # Pure-Python curl/httpie argument parser
+│   │   └── env_scanner.py     # API key environment variable detection
 │   ├── cligen/
 │   │   ├── scaffold.py        # Click CLI code generator
 │   │   ├── translator.py      # NL → command translation
 │   │   └── executor.py        # Safe command execution with confirmation
+│   ├── skillgen/
+│   │   └── generator.py       # Claude Code skill directory generator
 │   └── llm/
 │       ├── client.py          # LiteLLM wrapper (provider-agnostic)
 │       └── prompts.py         # Prompt templates for each pipeline stage
+├── skills/                    # Generated skill directories
 ├── tests/
 │   ├── test_observer/         # Shell recording tests
 │   ├── test_analyzer/         # Classification tests (mocked LLM)
 │   ├── test_specgen/          # Schema roundtrip & merge tests
 │   ├── test_cligen/           # Scaffold & translator tests
+│   ├── test_api_parser.py     # curl/httpie parsing tests
+│   ├── test_env_scanner.py    # Env var scanning tests
+│   ├── test_skillgen.py       # Skill generation tests
+│   ├── test_prompting.py      # Credential prompting tests
 │   ├── test_e2e_git.py        # Full pipeline E2E (mock LLM)
 │   └── test_real_e2e.py       # E2E with live LLM API calls
 ├── clias.toml                 # Default configuration
